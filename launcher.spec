@@ -1,0 +1,35 @@
+# -*- mode: python ; coding: utf-8 -*-
+a = Analysis(
+    ['launcher.py'],
+    pathex=[],
+    binaries=[],
+    datas=[],
+    hiddenimports=[],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=['torch', 'numpy', 'cv2', 'PyQt5', 'av'],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=None,
+    noarchive=False,
+)
+pyz = PYZ(a.pure, a.zipped_data, cipher=None)
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    [],
+    name="Lcat",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,
+    disable_windowed_traceback=True,
+    icon='icon/cat.ico',
+)

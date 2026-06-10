@@ -1,0 +1,31 @@
+# 便携运行环境 (太大不上传 git)
+python/
+runtime/
+
+# 模型权重 (太大)
+models/rife_official/
+models/rife_custom/
+
+# 大文件
+ffmpeg.exe
+
+# 日志
+*.log
+launcher.log
+
+# 构建产物
+build/
+dist/
+*.spec.bak
+
+# Python
+__pycache__/
+*.py[cod]
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
