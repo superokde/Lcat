@@ -25,12 +25,38 @@ def _probe(video_path: str) -> dict:
     duration_s = (int(m.group(1)) * 3600 + int(m.group(2)) * 60 +
                   int(m.group(3)) + int(m.group(4)) / (10 ** len(m.group(4))))
 
-    m = re.search(r"Stream #\d+:\d+.*?Video:.*?,\s+(\d+)x(\d+).*?,\s+([\d.]+)\s+fps", info)
+    m = re.search(r"Stream #\d+:\d+.*?Video:\s+(\S+).*?,\s+(\d+)x(\d+)(?:[^,]*?),\s+([\d.]+)\s+fps", info)
     if not m:
-        raise RuntimeError(f"未找到视频流: {video_path}")
-    width, height = int(m.group(1)), int(m.group(2))
-    fps = float(m.group(3))
+        # 回退：某些编码格式的 ffprobe 输出稍有不同
+        m = re.search(r"Stream #\d+:\d+.*?Video:.*?,\s+(\d+)x(\d+).*?,\s+([\d.]+)\s+fps", info)
+        if not m:
+            raise RuntimeError(f"未找到视频流: {video_path}")
+        codec_pix = ""
+    else:
+        codec_pix = m.group(1)
+
+    if codec_pix:
+        width, height = int(m.group(2)), int(m.group(3))
+    else:
+        width, height = int(m.group(1)), int(m.group(2))
+    fps = float(m.group(4 if codec_pix else 3))
     total_frames = int(duration_s * fps)
+
+    # 提取像素格式
+    pix_fmt = "yuv420p"
+    m_pix = re.search(r"(yuv\w+)\s*,?\s*\d+x\d+", info)
+    if not m_pix:
+        m_pix = re.search(r"Video:\s+\S+\s+\([^)]*,\s+(yuv\w+)", info)
+    if not m_pix:
+        m_pix = re.search(r"Video:\s+\S+\s+\([^)]*\),\s+(yuv\w+)", info)
+    if m_pix:
+        pix_fmt = m_pix.group(1)
+
+    # 提取 SAR
+    sar = None
+    m_sar = re.search(r"SAR\s+(\d+:\d+)", info)
+    if m_sar:
+        sar = m_sar.group(1)
 
     offset = 0.0
     m = re.search(r"Stream #\d+:\d+.*?Video:.*?,\s+start\s+([\d.]+)", info)
@@ -39,7 +65,7 @@ def _probe(video_path: str) -> dict:
 
     return {"width": width, "height": height, "fps": fps,
             "total_frames": total_frames, "duration": duration_s,
-            "start_time": offset}
+            "start_time": offset, "pix_fmt": pix_fmt, "sar": sar}
 
 
 class VideoReader:
@@ -53,6 +79,8 @@ class VideoReader:
         self.fps = meta["fps"]
         self.total_frames = meta["total_frames"]
         self.start_time = meta["start_time"]
+        self.pix_fmt = meta.get("pix_fmt", "yuv420p")
+        self.sar = meta.get("sar")
         logger.info("探测: %dx%d %.3ffps %d帧 (偏移 %.3fs)",
                      self.width, self.height, self.fps,
                      self.total_frames, self.start_time)

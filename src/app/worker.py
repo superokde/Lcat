@@ -96,7 +96,9 @@ class InterpolationWorker(QObject):
                         writer = VideoWriter(
                             out, fps_out, w, h, inp,
                             self.encoder, self.crf, self.pix_fmt,
-                            skip_frames=skip_frames)
+                            skip_frames=skip_frames,
+                            src_pix_fmt=getattr(reader, 'pix_fmt', 'yuv420p'),
+                            src_sar=getattr(reader, 'sar', None))
                         writer.write(prev)
                         out_idx += 1
                     for m in mids:
@@ -119,7 +121,9 @@ class InterpolationWorker(QObject):
             if writer is None and prev is not None:
                 h, w = prev.shape[:2]
                 writer = VideoWriter(out, fps_out, w, h, inp,
-                                     self.encoder, self.crf, self.pix_fmt)
+                                     self.encoder, self.crf, self.pix_fmt,
+                                     src_pix_fmt=getattr(reader, 'pix_fmt', 'yuv420p'),
+                                     src_sar=getattr(reader, 'sar', None))
                 writer.write(prev)
             if writer:
                 writer.close()

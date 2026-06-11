@@ -19,6 +19,19 @@ def _find_flownet_pkl(model_dir: Path) -> Path | None:
     return None
 
 
+def _cleanup_model_paths():
+    """清理之前加载的模型在 sys.path 和 sys.modules 中的残留。"""
+    import importlib
+    for p in list(sys.path):
+        if "rife_official" in str(p) or "rife_custom" in str(p):
+            sys.path.remove(p)
+    for m in list(sys.modules):
+        if m.startswith("train_log") or m.startswith("rife_model_"):
+            del sys.modules[m]
+    # 清除 importlib 缓存，确保下次导入重新加载
+    importlib.invalidate_caches()
+
+
 def _is_prelu_model(pkl_path: Path) -> bool:
     try:
         sd = torch.load(str(pkl_path), map_location="cpu", weights_only=True)
@@ -27,6 +40,10 @@ def _is_prelu_model(pkl_path: Path) -> bool:
         return "block0.conv0.0.1.weight" in sd
     except Exception:
         return False
+
+
+# v4.20 的 IFNet_HDv3.py 内部有自引用 teacher IFNet 构造参数不匹配的 bug
+_SKIP_VERSIONS = {"v4.20"}
 
 
 def scan_models() -> list[dict]:
@@ -43,6 +60,10 @@ def scan_models() -> list[dict]:
                 continue
             if _is_prelu_model(pkl):
                 logger.info("跳过 PReLU: %s", entry.name)
+                continue
+            ver = get_model_version(entry.name)
+            if ver in _SKIP_VERSIONS:
+                logger.info("跳过不兼容版本: %s", entry.name)
                 continue
             ver = get_model_version(entry.name)
             key = ver or entry.name
@@ -62,8 +83,12 @@ def load_model(model_info: dict, device: torch.device):
         raise FileNotFoundError(f"模型架构文件缺失: {arch_file}")
 
     # 确保 model_dir 和项目根在 sys.path 中
-    if str(model_dir) not in sys.path:
-        sys.path.insert(0, str(model_dir))
+    # 清理旧模型的 sys.path 和 sys.modules 缓存，防止不同模型架构冲突
+    _cleanup_model_paths()
+    # 模型目录 + train_log 父目录都加入 sys.path，兼容嵌套结构
+    sys.path.insert(0, str(model_dir))
+    sys.path.insert(0, str(train_log.parent))
+
     from utils.config import APP_ROOT
     if str(APP_ROOT / "src") not in sys.path:
         sys.path.insert(0, str(APP_ROOT / "src"))
