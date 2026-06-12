@@ -106,7 +106,10 @@ class MainWindow(QMainWindow):
             if self._model is None:
                 QMessageBox.warning(self, "失败", f"无法加载: {info['name']}")
                 return
-            self._engine = InferenceEngine(self._model)
+            p = self.controls.get_params()
+            self._engine = InferenceEngine(self._model,
+                scene_threshold=p.get("scene_threshold", 0.2),
+                use_fp16=p.get("use_fp16", False))
             dn = (torch.cuda.get_device_name(device.index)
                   if device.type == "cuda" else "CPU")
             self.setWindowTitle(f"自用视频插帧工具 - {info['name']} [{dn}]")

@@ -54,6 +54,19 @@ class ControlsPanel(QWidget):
         self.post_action = QComboBox()
         self.post_action.addItems(["无", "关机"])
         pf.addRow("任务后:", self.post_action)
+        # 场景检测阈值
+        self.scene_threshold = QSpinBox()
+        self.scene_threshold.setRange(1, 100)
+        self.scene_threshold.setValue(20)
+        self.scene_threshold.setSuffix("%")
+        self.scene_threshold.setToolTip("SSIM 阈值: 越低越容易判定为场景切换\n动漫推荐 5%, 真人推荐 20%")
+        pf.addRow("场景切换:", self.scene_threshold)
+        # 动漫模式
+        self.anime_mode = QComboBox()
+        self.anime_mode.addItems(["标准", "动漫"])
+        self.anime_mode.setToolTip("动漫模式: 场景阈值 5%，减少跨切换 morph 伪影")
+        self.anime_mode.currentIndexChanged.connect(self._on_anime_mode)
+        pf.addRow("内容类型:", self.anime_mode)
         pg.setLayout(pf)
         l.addWidget(pg)
 
@@ -75,6 +88,10 @@ class ControlsPanel(QWidget):
                     f"GPU {i}: {torch.cuda.get_device_name(i)}", f"cuda:{i}")
         self.device_combo.addItem("CPU", "cpu")
         df.addRow("推理:", self.device_combo)
+        self.fp16_checkbox = QComboBox()
+        self.fp16_checkbox.addItems(["FP32 (标准)", "FP16 (高速)"])
+        self.fp16_checkbox.setToolTip("FP16 半精度推理，RTX 20 系以上支持\n速度提升约 30%，画质几乎无损")
+        df.addRow("精度:", self.fp16_checkbox)
         dg.setLayout(df)
         l.addWidget(dg)
 
@@ -92,6 +109,13 @@ class ControlsPanel(QWidget):
         l.addWidget(ag)
         l.addStretch()
 
+    def _on_anime_mode(self):
+        idx = self.anime_mode.currentIndex()
+        if idx == 1:  # 动漫
+            self.scene_threshold.setValue(5)
+        else:
+            self.scene_threshold.setValue(20)
+
     def _browse(self):
         d = QFileDialog.getExistingDirectory(self, "选择输出目录")
         if d:
@@ -106,6 +130,8 @@ class ControlsPanel(QWidget):
             "post_action": self.post_action.currentText(),
             "encoder": fmt.get("encoder", "libx264"),
             "pix_fmt": fmt.get("pix_fmt", "yuv420p"),
+            "scene_threshold": self.scene_threshold.value() / 100.0,
+            "use_fp16": self.fp16_checkbox.currentIndex() == 1,
         }
 
     def selected_device(self):
@@ -115,5 +141,6 @@ class ControlsPanel(QWidget):
     def set_controls_enabled(self, e):
         for w in [self.output_dir, self.output_browse, self.fps_mult,
                    self.crf, self.post_action, self.format_combo,
-                   self.device_combo]:
+                   self.device_combo, self.scene_threshold, self.anime_mode,
+                   self.fp16_checkbox]:
             w.setEnabled(e)
