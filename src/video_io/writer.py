@@ -154,9 +154,7 @@ class VideoWriter:
             logger.info("源视频为 8bit (%s)，10bit 编码降级为 8bit", src_pix_fmt)
             self.pix_fmt = "yuv420p"
 
-        # 帧率输出电视兼容的标准值 (23.98×2→48, 29.97×2→60)
-        # 音画同步: 帧数不变，播放速度差 0.08%，无法感知
-        self._fps_exact = _fps_to_rational(fps, tv_compat=True)
+        self._fps_exact = _fps_to_rational(fps, tv_compat=False)
         # 计算匹配帧率的 timebase (Doom9 社区方案: video_track_timescale)
         self._timescale = int(self._fps_exact.split("/")[0])
         self._src_sar = src_sar
