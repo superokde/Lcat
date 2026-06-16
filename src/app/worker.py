@@ -1,5 +1,6 @@
 """Worker: 后台推理线程 (单管道直写 + 断点续传)"""
 import logging
+import os
 import time
 from pathlib import Path
 from PyQt5.QtCore import QObject, pyqtSignal
@@ -53,6 +54,17 @@ class InterpolationWorker(QObject):
         try:
             reader = VideoReader(inp)
             out_path = Path(out)
+            audio_src = inp  # 始终用原始文件提取音轨
+
+            # VFR → CFR 预处理 (方案4: 社区公认最可靠方法)
+            if reader.vfr_needs_cfr:
+                from video_io.reader import convert_vfr_to_cfr
+                cfr_path = convert_vfr_to_cfr(inp, reader.fps,
+                                              str(out_path.parent))
+                reader.close()
+                reader = VideoReader(cfr_path)
+                reader._cfr_path = cfr_path  # 标记临时文件以便清理
+
             fps_out = reader.fps * self.fps_multiplier
 
             # 续传: 读进度文件
@@ -94,7 +106,7 @@ class InterpolationWorker(QObject):
                     if writer is None:
                         h, w = frame.shape[:2]
                         writer = VideoWriter(
-                            out, fps_out, w, h, inp,
+                            out, fps_out, w, h, audio_src,
                             self.encoder, self.crf, self.pix_fmt,
                             skip_frames=skip_frames,
                             src_pix_fmt=getattr(reader, 'pix_fmt', 'yuv420p'),
@@ -120,7 +132,7 @@ class InterpolationWorker(QObject):
             reader.close()
             if writer is None and prev is not None:
                 h, w = prev.shape[:2]
-                writer = VideoWriter(out, fps_out, w, h, inp,
+                writer = VideoWriter(out, fps_out, w, h, audio_src,
                                      self.encoder, self.crf, self.pix_fmt,
                                      src_pix_fmt=getattr(reader, 'pix_fmt', 'yuv420p'),
                                      src_sar=getattr(reader, 'sar', None))
@@ -133,6 +145,14 @@ class InterpolationWorker(QObject):
             logger.info("完成: %s (%d帧, %.1fs)",
                         Path(inp).name, out_idx, elapsed)
             self.file_finished.emit(vid, out)
+
+            # 清理 VFR→CFR 临时文件
+            if getattr(reader, '_cfr_path', None):
+                try:
+                    os.unlink(reader._cfr_path)
+                    logger.info("已清理 CFR 临时文件: %s", reader._cfr_path)
+                except Exception:
+                    pass
 
         except Exception as e:
             logger.exception("失败: %s", inp)
