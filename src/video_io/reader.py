@@ -27,7 +27,6 @@ def _probe(video_path: str) -> dict:
 
     m = re.search(r"Stream #\d+:\d+.*?Video:\s+(\S+).*?,\s+(\d+)x(\d+)(?:[^,]*?),\s+([\d.]+)\s+fps", info)
     if not m:
-        # 回退：某些编码格式的 ffprobe 输出稍有不同
         m = re.search(r"Stream #\d+:\d+.*?Video:.*?,\s+(\d+)x(\d+).*?,\s+([\d.]+)\s+fps", info)
         if not m:
             raise RuntimeError(f"未找到视频流: {video_path}")
@@ -39,7 +38,34 @@ def _probe(video_path: str) -> dict:
         width, height = int(m.group(2)), int(m.group(3))
     else:
         width, height = int(m.group(1)), int(m.group(2))
-    fps = float(m.group(4 if codec_pix else 3))
+    fps_ffmpeg = float(m.group(4 if codec_pix else 3))
+
+    # VFR 检测: 用 ffprobe 获取精确 avg_frame_rate (零额外耗时)
+    run2_kw = {"capture_output": True, "timeout": 15}
+    if sys.platform == "win32":
+        run2_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+    r2 = subprocess.run(
+        [ff, "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=avg_frame_rate",
+         "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+        **run2_kw)
+    avg_str = r2.stdout.decode("utf-8", errors="replace").strip()
+    try:
+        num, den = avg_str.split("/")
+        fps_avg = int(num) / int(den) if int(den) > 0 else fps_ffmpeg
+    except (ValueError, ZeroDivisionError):
+        fps_avg = fps_ffmpeg
+
+    # VFR 判定: 流级平均帧率与容器声明差异 >5%
+    fps = fps_avg
+    vfr_warn = False
+    if fps_avg > 0 and abs(fps_avg - fps_ffmpeg) / max(fps_avg, fps_ffmpeg) > 0.05:
+        fps = fps_avg
+        vfr_warn = True
+        logger.warning("VFR 检测: 声明 %.3f, 实际 %.3f (差异 %.1f%%)，使用实际帧率",
+                       fps_ffmpeg, fps_avg,
+                       abs(fps_avg - fps_ffmpeg) / fps_avg * 100)
+
     total_frames = int(duration_s * fps)
 
     # 提取像素格式
@@ -65,7 +91,8 @@ def _probe(video_path: str) -> dict:
 
     return {"width": width, "height": height, "fps": fps,
             "total_frames": total_frames, "duration": duration_s,
-            "start_time": offset, "pix_fmt": pix_fmt, "sar": sar}
+            "start_time": offset, "pix_fmt": pix_fmt, "sar": sar,
+            "vfr_warn": vfr_warn}
 
 
 class VideoReader:
