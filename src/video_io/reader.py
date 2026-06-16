@@ -117,7 +117,7 @@ class VideoReader:
         if sys.platform == "win32":
             popen_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
         self._proc = subprocess.Popen(
-            [ff, "-vsync", "0", "-i", self.path,
+            [ff, "-fflags", "+genpts", "-vsync", "0", "-i", self.path,
              "-f", "rawvideo", "-pix_fmt", "bgr24", "-vcodec", "rawvideo",
              "-an", "-sn", "-"],
             **popen_kw)
