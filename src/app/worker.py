@@ -58,15 +58,28 @@ def _process_dovi_rpu(inp: str, total_source_frames: int,
         logger.warning("DoVi: RPU 提取失败")
         return None
 
-    # 3. 生成匹配输出帧数的 RPU (duplicate 源 RPU 序列)
+    # 3. 获取实际 RPU 帧数 (可能与视频帧数不同)
+    r = subprocess.run([dovi, "info", "-i", src_rpu],
+                       capture_output=True, timeout=15, **popen_kw)
+    import re as _re
+    rpu_frames = 0
+    m = _re.search(r"metadata len (\d+)",
+                   r.stderr.decode(errors="replace"))
+    if m:
+        rpu_frames = int(m.group(1))
+    if rpu_frames <= 0:
+        rpu_frames = total_source_frames
+    logger.info("DoVi: RPU 实际 %d 帧 (视频 %d 帧)", rpu_frames, total_source_frames)
+
+    # 4. 生成匹配输出帧数的 RPU (duplicate 源 RPU 序列)
     expanded_rpu = os.path.join(work_dir, "_dovi_expanded.bin")
     edit_json = os.path.join(work_dir, "_dovi_edit.json")
     with open(edit_json, "w", encoding="utf-8") as f:
         json.dump({
             "duplicate": [{
                 "source": 0,
-                "offset": total_source_frames,
-                "length": total_source_frames
+                "offset": rpu_frames,
+                "length": rpu_frames
             }]
         }, f)
 
