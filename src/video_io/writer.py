@@ -274,6 +274,7 @@ class VideoWriter:
         if sys.platform == "win32":
             popen_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
 
+        logger.info("FFMPEG: %s", " ".join(cmd))
         self._proc = subprocess.Popen(cmd, **popen_kw)
         self._stderr_chunks = []
 
