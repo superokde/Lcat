@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 def _find_dovi_tool() -> str | None:
-    """查找 dovi_tool: 项目同目录优先。"""
     import shutil
     from utils.config import APP_ROOT
     for n in ("dovi_tool", "dovi_tool.exe"):
@@ -24,55 +23,63 @@ def _find_dovi_tool() -> str | None:
     return shutil.which("dovi_tool") or shutil.which("dovi_tool.exe")
 
 
-def _process_dovi_rpu(inp: str, total_source_frames: int,
-                      total_output_frames: int, work_dir: str) -> str | None:
-    """提取源 DoVi RPU → 生成匹配输出帧数的 RPU → 返回 RPU 文件路径。"""
+def _inject_dovi_rpu(output_path: str, src_rpu: str, audio_src: str):
+    """后处理: dovi_tool inject-rpu 注入源 RPU (社区标准方案)。
+    inject-rpu 自动处理帧数差异, 无需手动 duplicate。"""
     dovi = _find_dovi_tool()
     if not dovi:
-        logger.warning("dovi_tool 未找到，跳过 DoVi RPU 处理")
-        return None
-
-    popen_kw = {}
+        return
+    from utils.config import find_ffmpeg
+    ff = find_ffmpeg()
+    pk = {}
     if sys.platform == "win32":
-        popen_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+        pk["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-    # 1. 直接用 dovi_tool 从 MKV 提取 RPU (社区方案, 不走 ffmpeg pipe 避免丢帧)
-    src_rpu = os.path.join(work_dir, "_dovi_src_rpu.bin")
-    logger.info("DoVi: 直接从 MKV 提取 RPU...")
-    r = subprocess.run([dovi, "extract-rpu", inp, "-o", src_rpu],
-                       capture_output=True, timeout=300, **popen_kw)
+    logger.info("DoVi: 注入 RPU 到输出视频...")
+    out_path = Path(output_path)
+    tmp_hevc = str(out_path.parent / f"_{out_path.stem}_tmp.hevc")
+    tmp_dovi = str(out_path.parent / f"_{out_path.stem}_tmp_dovi.hevc")
+    tmp_mkv = str(out_path.parent / f"_{out_path.stem}_tmp_dovi.mkv")
+
+    # 1. 提取输出 HEVC
+    r = subprocess.run([ff, "-y", "-i", output_path, "-c:v", "copy",
+                        "-bsf:v", "hevc_mp4toannexb", "-f", "hevc", tmp_hevc],
+                       capture_output=True, timeout=300, **pk)
     if r.returncode != 0:
-        logger.warning("DoVi: RPU 提取失败: %s",
+        logger.warning("DoVi: HEVC 提取失败")
+        return
+
+    # 2. inject-rpu
+    r = subprocess.run([dovi, "inject-rpu", "-i", tmp_hevc,
+                        "--rpu-in", src_rpu, "-o", tmp_dovi],
+                       capture_output=True, timeout=120, **pk)
+    os.unlink(tmp_hevc)
+    if r.returncode != 0:
+        logger.warning("DoVi: RPU 注入失败: %s",
                        r.stderr.decode(errors="replace")[-200:])
-        return None
+        try:
+            os.unlink(tmp_dovi)
+        except Exception:
+            pass
+        return
 
-    # 2. 复制 RPU (二进制回退: 尝试 N, N-1, N-2... 直到成功)
-    rpu_frames = 0
-    expanded_rpu = os.path.join(work_dir, "_dovi_expanded.bin")
-    edit_json = os.path.join(work_dir, "_dovi_edit.json")
-    for attempt in range(15):
-        n = total_source_frames - attempt
-        if n <= 0:
-            break
-        with open(edit_json, "w", encoding="utf-8") as f:
-            json.dump({"duplicate": [{"source": 0, "offset": n, "length": n}]}, f)
-        r = subprocess.run(
-            [dovi, "editor", "-i", src_rpu, "-j", edit_json, "-o", expanded_rpu],
-            capture_output=True, timeout=60, **popen_kw)
-        if r.returncode == 0:
-            rpu_frames = n
-            break
-    os.unlink(src_rpu)
-    os.unlink(edit_json)
+    # 3. remux DoVi HEVC + 原始音轨/字幕
+    r = subprocess.run([
+        ff, "-y", "-i", tmp_dovi, "-i", audio_src,
+        "-map_metadata", "-1", "-map", "0:v", "-c:v", "copy",
+        "-map", "1:a?", "-map", "1:s?", "-c:a", "copy",
+        "-c:s", "mov_text" if out_path.suffix == ".mp4" else "copy",
+        tmp_mkv],
+        capture_output=True, timeout=300, **pk)
+    os.unlink(tmp_dovi)
     if r.returncode != 0:
-        logger.warning("DoVi: RPU 扩展失败 (%d 次尝试)", attempt + 1)
-        try: os.unlink(expanded_rpu)
-        except Exception: pass
-        return None
+        logger.warning("DoVi: remux 失败")
+        return
 
-    logger.info("DoVi: RPU %d 帧 → %d 帧 (尝试 %d 次)",
-                rpu_frames, rpu_frames * 2, attempt + 1)
-    return expanded_rpu
+    # 4. 替换
+    os.unlink(output_path)
+    os.replace(tmp_mkv, output_path)
+    logger.info("DoVi: RPU 注入完成 → %s", out_path.name)
 
 
 class InterpolationWorker(QObject):
@@ -119,39 +126,47 @@ class InterpolationWorker(QObject):
         try:
             reader = VideoReader(inp)
             out_path = Path(out)
-            audio_src = inp  # 始终用原始文件提取音轨
-
-            # 保存源属性 (VFR→CFR 后会丢失)
+            audio_src = inp
             _has_dovi = reader.has_dovi
             _vfr = reader.vfr_needs_cfr
 
-            # VFR → CFR 预处理 (方案4: 社区公认最可靠方法)
             if _vfr:
                 from video_io.reader import convert_vfr_to_cfr
                 cfr_path = convert_vfr_to_cfr(inp, reader.fps,
                                               str(out_path.parent))
                 reader.close()
                 reader = VideoReader(cfr_path)
-                reader._cfr_path = cfr_path  # 标记临时文件以便清理
+                reader._cfr_path = cfr_path
 
             fps_out = reader.fps * self.fps_multiplier
 
-            # DoVi RPU 预处理
-            dovi_rpu = None
+            # DoVi: 提取源 RPU (后处理注入)
+            dovi_src_rpu = None
             if _has_dovi:
-                total_out_est = reader.total_frames * self.fps_multiplier
-                dovi_rpu = _process_dovi_rpu(
-                    inp, reader.total_frames, total_out_est,
-                    str(out_path.parent))
-                if dovi_rpu:
-                    logger.info("DoVi: RPU 已就绪，将嵌入输出视频")
+                d = _find_dovi_tool()
+                if d:
+                    dpk = {}
+                    if sys.platform == "win32":
+                        dpk["creationflags"] = subprocess.CREATE_NO_WINDOW
+                    dovi_src_rpu = os.path.join(
+                        str(out_path.parent),
+                        f"{out_path.stem}_dovi_rpu.bin")
+                    r = subprocess.run(
+                        [d, "extract-rpu", inp, "-o", dovi_src_rpu],
+                        capture_output=True, timeout=300, **dpk)
+                    if r.returncode != 0:
+                        logger.warning("DoVi: RPU 提取失败")
+                        dovi_src_rpu = None
+                    else:
+                        logger.info("DoVi: 源 RPU 已提取")
 
-            # 续传: 读进度文件
+            # 续传
             progress_file = out_path.parent / f"{out_path.stem}_progress.txt"
             skip_frames = 0
             if progress_file.exists():
                 try:
-                    skip_frames = int(progress_file.read_text(encoding="utf-8").strip())
+                    skip_frames = int(progress_file.read_text(
+                        encoding="utf-8").strip())
                     logger.info("续传: 跳过%d帧", skip_frames)
                     self.file_resumed.emit(vid, skip_frames)
                 except Exception:
@@ -164,7 +179,6 @@ class InterpolationWorker(QObject):
             out_idx = skip_frames
             in_idx = skip_frames // self.fps_multiplier
 
-            # 跳到续传帧
             for _ in range(in_idx):
                 try:
                     prev = next(iter(reader))
@@ -192,8 +206,7 @@ class InterpolationWorker(QObject):
                             src_sar=getattr(reader, 'sar', None),
                             color_space=getattr(reader, 'color_space', 'bt709'),
                             color_transfer=getattr(reader, 'color_transfer', 'bt709'),
-                            color_primaries=getattr(reader, 'color_primaries', 'bt709'),
-                            dovi_rpu=dovi_rpu)
+                            color_primaries=getattr(reader, 'color_primaries', 'bt709'))
                         writer.write(prev)
                         out_idx += 1
                     for m in mids:
@@ -221,27 +234,31 @@ class InterpolationWorker(QObject):
                                      src_sar=getattr(reader, 'sar', None),
                                      color_space=getattr(reader, 'color_space', 'bt709'),
                                      color_transfer=getattr(reader, 'color_transfer', 'bt709'),
-                                     color_primaries=getattr(reader, 'color_primaries', 'bt709'),
-                                     dovi_rpu=dovi_rpu)
+                                     color_primaries=getattr(reader, 'color_primaries', 'bt709'))
                 writer.write(prev)
             if writer:
                 writer.close()
                 if self._cancelled:
                     return
+
+            # DoVi 后处理注入
+            if dovi_src_rpu and not self._cancelled:
+                _inject_dovi_rpu(out, dovi_src_rpu, audio_src)
+
             elapsed = time.perf_counter() - t0
             logger.info("完成: %s (%d帧, %.1fs)",
                         Path(inp).name, out_idx, elapsed)
             self.file_finished.emit(vid, out)
 
-            # 清理 VFR→CFR 临时文件 和 DoVi RPU 临时文件
+            # 清理临时文件
             if getattr(reader, '_cfr_path', None):
                 try:
                     os.unlink(reader._cfr_path)
                 except Exception:
                     pass
-            if dovi_rpu:
+            if dovi_src_rpu:
                 try:
-                    os.unlink(dovi_rpu)
+                    os.unlink(dovi_src_rpu)
                 except Exception:
                     pass
 

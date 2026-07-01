@@ -230,12 +230,7 @@ class VideoWriter:
                     f"colormatrix={self._color_space}",
                     "hdr-opt=1", "chromaloc=2",
                 ]
-        if "x265" in self.encoder and self._dovi_rpu:
-            _hdr_opts += [
-                f"dolby-vision-rpu={self._dovi_rpu}",
-                "dolby-vision-profile=8.1",
-            ]
-            logger.info("DoVi: 使用 x265 dolby-vision-rpu")
+        # DoVi RPU 不在此注入 — 改用后处理 dovi_tool inject-rpu (社区标准方案)
 
         cmd += _encode_params(self.encoder, self.crf, self.pix_fmt)
 
