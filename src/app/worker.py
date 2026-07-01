@@ -154,9 +154,11 @@ class InterpolationWorker(QObject):
                     dovi_src_rpu = os.path.join(
                         str(out_path.parent),
                         f"{out_path.stem}_dovi_rpu.bin")
+                    # RPU 提取时间与片长成正比 (~2s/分钟, 最低 5 分钟)
+                    rpu_timeout = max(300, int(reader.total_frames / reader.fps / 30))
                     r = subprocess.run(
                         [d, "extract-rpu", inp, "-o", dovi_src_rpu],
-                        capture_output=True, timeout=300, **dpk)
+                        capture_output=True, timeout=rpu_timeout, **dpk)
                     if r.returncode != 0:
                         logger.warning("DoVi: RPU 提取失败")
                         dovi_src_rpu = None
