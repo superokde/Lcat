@@ -110,7 +110,10 @@ class InterpolationWorker(QObject):
                             self.encoder, self.crf, self.pix_fmt,
                             skip_frames=skip_frames,
                             src_pix_fmt=getattr(reader, 'pix_fmt', 'yuv420p'),
-                            src_sar=getattr(reader, 'sar', None))
+                            src_sar=getattr(reader, 'sar', None),
+                            color_space=getattr(reader, 'color_space', 'bt709'),
+                            color_transfer=getattr(reader, 'color_transfer', 'bt709'),
+                            color_primaries=getattr(reader, 'color_primaries', 'bt709'))
                         writer.write(prev)
                         out_idx += 1
                     for m in mids:
@@ -135,7 +138,10 @@ class InterpolationWorker(QObject):
                 writer = VideoWriter(out, fps_out, w, h, audio_src,
                                      self.encoder, self.crf, self.pix_fmt,
                                      src_pix_fmt=getattr(reader, 'pix_fmt', 'yuv420p'),
-                                     src_sar=getattr(reader, 'sar', None))
+                                     src_sar=getattr(reader, 'sar', None),
+                                     color_space=getattr(reader, 'color_space', 'bt709'),
+                                     color_transfer=getattr(reader, 'color_transfer', 'bt709'),
+                                     color_primaries=getattr(reader, 'color_primaries', 'bt709'))
                 writer.write(prev)
             if writer:
                 writer.close()

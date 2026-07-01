@@ -134,7 +134,10 @@ class VideoWriter:
                  audio_src: str = None, encoder: str = "libx264",
                  crf: int = 18, pix_fmt: str = "yuv420p",
                  skip_frames: int = 0, src_pix_fmt: str = "yuv420p",
-                 src_sar: str = None):
+                 src_sar: str = None,
+                 color_space: str = "bt709",
+                 color_transfer: str = "bt709",
+                 color_primaries: str = "bt709"):
         self.output_path = Path(output_path)
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         self.fps = fps
@@ -158,6 +161,12 @@ class VideoWriter:
         # 计算匹配帧率的 timebase (Doom9 社区方案: video_track_timescale)
         self._timescale = int(self._fps_exact.split("/")[0])
         self._src_sar = src_sar
+        self._color_space = color_space
+        self._color_transfer = color_transfer
+        self._color_primaries = color_primaries
+        if color_transfer == "smpte2084" or color_primaries == "bt2020":
+            logger.info("HDR 色彩: %s/%s/%s",
+                        color_space, color_transfer, color_primaries)
 
         # 磁盘预检
         free_mb = shutil.disk_usage(self.output_path.parent).free // (1024 * 1024)
@@ -220,9 +229,11 @@ class VideoWriter:
         if self._src_sar:
             cmd += ["-sar", self._src_sar]
 
-        # 色彩元数据 (电视兼容)
-        cmd += ["-color_range", "1", "-color_primaries", "bt709",
-                "-color_trc", "bt709", "-colorspace", "bt709"]
+        # 色彩元数据 (从源视频透传, HDR/SDR 自动适配)
+        cmd += ["-color_range", "1",
+                "-color_primaries", self._color_primaries,
+                "-color_trc", self._color_transfer,
+                "-colorspace", self._color_space]
 
         cmd.append(str(self.output_path))
 

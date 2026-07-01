@@ -45,17 +45,56 @@ def _probe(video_path: str) -> dict:
     run2_kw = {"capture_output": True, "timeout": 15}
     if sys.platform == "win32":
         run2_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+    # 查找 ffprobe: 项目同目录优先，其次系统 PATH
+    ff_dir = os.path.dirname(ff)
+    ffprobe_bin = os.path.join(ff_dir, "ffprobe.exe")
+    if not os.path.isfile(ffprobe_bin):
+        import shutil
+        ffprobe_bin = shutil.which("ffprobe") or shutil.which("ffprobe.exe")
+        if not ffprobe_bin:
+            raise RuntimeError("ffprobe 未找到，请将 ffprobe.exe 放入项目目录或系统 PATH")
     r2 = subprocess.run(
-        [ff, "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=avg_frame_rate",
+        [ffprobe_bin, "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=avg_frame_rate,color_space,color_transfer,color_primaries",
          "-of", "default=noprint_wrappers=1:nokey=1", video_path],
         **run2_kw)
-    avg_str = r2.stdout.decode("utf-8", errors="replace").strip()
-    try:
-        num, den = avg_str.split("/")
-        fps_avg = int(num) / int(den) if int(den) > 0 else fps_ffmpeg
-    except (ValueError, ZeroDivisionError):
-        fps_avg = fps_ffmpeg
+    out2 = r2.stdout.decode("utf-8", errors="replace")
+    lines = [l.strip() for l in out2.splitlines() if l.strip()]
+
+    # 分离帧率(含"/")和色彩字段
+    fps_avg = fps_ffmpeg
+    color_vals = []
+    for line in lines:
+        if "/" in line and not line.startswith("bt"):
+            try:
+                num, den = line.split("/")
+                fps_avg = int(num) / int(den) if int(den) > 0 else fps_ffmpeg
+            except (ValueError, ZeroDivisionError):
+                pass
+        elif line.startswith("bt") or line in ("smpte2084", "arib-std-b67",
+                "smpte170m", "smpte240m", "iec61966-2-4", "linear"):
+            color_vals.append(line)
+
+    # ffprobe default writer 输出顺序不可控，按典型 HDR 字段特征分类
+    color_space = "bt709"
+    color_transfer = "bt709"
+    color_primaries = "bt709"
+    for v in color_vals:
+        if "nc" in v or "ncl" in v:
+            color_space = v
+        elif v in ("smpte2084", "arib-std-b67", "smpte428", "linear", "bt470bg",
+                   "bt470m", "smpte170m", "smpte240m", "iec61966-2-4", "bt709",
+                   "bt1361e", "log100", "log316", "iec61966-2-1", "bt2020-10",
+                   "bt2020-12", "smpte428-1"):
+            color_transfer = v
+        elif v.startswith("bt") or v.startswith("smpte"):
+            color_primaries = v
+    # HDR 同义修正
+    if color_transfer == "smpte2084":
+        if "bt2020" not in color_primaries:
+            color_primaries = "bt2020"
+        if "bt2020" not in color_space:
+            color_space = "bt2020nc"
 
     # VFR 判定: 比对容器级 r_frame_rate 和流级 avg_frame_rate
     r_frame_rate = None
@@ -109,7 +148,9 @@ def _probe(video_path: str) -> dict:
     return {"width": width, "height": height, "fps": fps,
             "total_frames": total_frames, "duration": duration_s,
             "start_time": offset, "pix_fmt": pix_fmt, "sar": sar,
-            "vfr_warn": vfr_needs_cfr}
+            "vfr_warn": vfr_needs_cfr,
+            "color_space": color_space, "color_transfer": color_transfer,
+            "color_primaries": color_primaries}
 
 
 def convert_vfr_to_cfr(src_path: str, fps_target: float, work_dir: str) -> str:
@@ -149,6 +190,9 @@ class VideoReader:
         self.sar = meta.get("sar")
         self.vfr_needs_cfr = meta.get("vfr_warn", False)
         self._cfr_path: str | None = None
+        self.color_space = meta.get("color_space", "bt709")
+        self.color_transfer = meta.get("color_transfer", "bt709")
+        self.color_primaries = meta.get("color_primaries", "bt709")
         logger.info("探测: %dx%d %.3ffps %d帧 (偏移 %.3fs)",
                      self.width, self.height, self.fps,
                      self.total_frames, self.start_time)
