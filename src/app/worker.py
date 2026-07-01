@@ -63,30 +63,19 @@ def _inject_dovi_rpu(output_path: str, src_rpu: str, audio_src: str):
             pass
         return
 
-    # 3. 提取源字幕 (PGS/SRT 等, 跳过 DOVI side_data)
-    tmp_subs = str(out_path.parent / f"_{out_path.stem}_subs.mkv")
-    r = subprocess.run([ff, "-y", "-i", audio_src, "-map", "0:s?",
-                        "-c:s", "copy", tmp_subs],
-                       capture_output=True, timeout=60, **pk)
-    has_subs = r.returncode == 0 and os.path.getsize(tmp_subs) > 1024
-    if not has_subs:
-        try: os.unlink(tmp_subs)
-        except Exception: pass
-        tmp_subs = None
-
-    # 4. remux DoVi HEVC + 音频 + 字幕
-    cmd = [ff, "-y", "-i", tmp_dovi, "-i", audio_src,
-           "-map_metadata", "-1", "-map", "0:v", "-c:v", "copy",
-           "-map", "1:a?", "-c:a", "copy"]
-    if tmp_subs:
-        cmd += ["-i", tmp_subs, "-map", "2:s?", "-c:s", "copy"]
-    cmd.append(tmp_mkv)
-    r = subprocess.run(cmd, capture_output=True, timeout=300, **pk)
+    # 3. mkvmerge 混流 (社区标准方案, 完美支持 DoVi HEVC + 音频 + 字幕)
+    mkvmerge = os.path.join(str(Path(__file__).resolve().parent.parent.parent),
+                            "mkvmerge.exe")
+    if not os.path.isfile(mkvmerge):
+        mkvmerge = "mkvmerge"  # fallback: 系统 PATH
+    r = subprocess.run([
+        mkvmerge, "-o", tmp_mkv,
+        "--no-chapters", "--no-global-tags",
+        tmp_dovi, audio_src],
+        capture_output=True, timeout=300, **pk)
     os.unlink(tmp_dovi)
-    if tmp_subs:
-        os.unlink(tmp_subs)
     if r.returncode != 0:
-        logger.warning("DoVi: remux 失败: %s",
+        logger.warning("DoVi: mkvmerge 混流失败: %s",
                        r.stderr.decode(errors="replace")[-300:])
         return
 
