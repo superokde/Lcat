@@ -58,13 +58,13 @@ def _process_dovi_rpu(inp: str, total_source_frames: int,
         logger.warning("DoVi: RPU 提取失败")
         return None
 
-    # 3. 获取实际 RPU 帧数: editor remove 帧 0 → stderr 输出 "Initial metadata len N"
+    # 3. 获取实际 RPU 帧数: 用小 duplicate 触发 metadata len 输出
     rpu_frames = 0
     import re as _re
     cnt_json = os.path.join(work_dir, "_dovi_cnt.json")
     cnt_out = os.path.join(work_dir, "_dovi_cnt.bin")
     with open(cnt_json, "w", encoding="utf-8") as f:
-        json.dump({"remove": ["0-0"]}, f)  # 删除帧 0, editor 会输出 metadata len
+        json.dump({"duplicate": [{"source": 0, "offset": 100, "length": 1}]}, f)
     r = subprocess.run(
         [dovi, "editor", "-i", src_rpu, "-j", cnt_json, "-o", cnt_out],
         capture_output=True, timeout=15, **popen_kw)
@@ -72,13 +72,13 @@ def _process_dovi_rpu(inp: str, total_source_frames: int,
                    r.stderr.decode(errors="replace"))
     if m:
         rpu_frames = int(m.group(1))
-    if rpu_frames <= 0:
-        rpu_frames = total_source_frames
     for f in (cnt_json, cnt_out):
         try:
             os.unlink(f)
         except Exception:
             pass
+    if rpu_frames <= 0:
+        rpu_frames = total_source_frames
     logger.info("DoVi: RPU 实际 %d 帧 (视频 %d 帧)", rpu_frames, total_source_frames)
 
     # 4. 生成匹配输出帧数的 RPU (duplicate 源 RPU 序列)
