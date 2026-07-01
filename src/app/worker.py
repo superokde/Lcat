@@ -155,7 +155,7 @@ class InterpolationWorker(QObject):
                         str(out_path.parent),
                         f"{out_path.stem}_dovi_rpu.bin")
                     # RPU 提取时间与片长成正比 (~2s/分钟, 最低 5 分钟)
-                    rpu_timeout = max(600, int(reader.total_frames / reader.fps / 15))
+                    rpu_timeout = 1200  # DoVi RPU 提取: 大文件需要较长时间
                     r = subprocess.run(
                         [d, "extract-rpu", inp, "-o", dovi_src_rpu],
                         capture_output=True, timeout=rpu_timeout, **dpk)
