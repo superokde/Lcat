@@ -46,51 +46,32 @@ def _process_dovi_rpu(inp: str, total_source_frames: int,
                        r.stderr.decode(errors="replace")[-200:])
         return None
 
-    # 2. 获取 RPU 实际帧数 (用 probe duplicate 触发 stderr 输出)
+    # 2. 复制 RPU (二进制回退: 尝试 N, N-1, N-2... 直到成功)
     rpu_frames = 0
-    import re as _re
-    probe_json = os.path.join(work_dir, "_dovi_probe.json")
-    probe_out = os.path.join(work_dir, "_dovi_probe.bin")
-    with open(probe_json, "w", encoding="utf-8") as f:
-        json.dump({"duplicate": [{"source": 0, "offset": 10, "length": 1}]}, f)
-    r = subprocess.run(
-        [dovi, "editor", "-i", src_rpu, "-j", probe_json, "-o", probe_out],
-        capture_output=True, timeout=15, **popen_kw)
-    m = _re.search(r"Initial metadata len (\d+)",
-                   r.stderr.decode(errors="replace"))
-    if m:
-        rpu_frames = int(m.group(1))
-    for f in (probe_json, probe_out):
-        try: os.unlink(f)
-        except Exception: pass
-    if rpu_frames <= 0:
-        rpu_frames = total_source_frames
-    logger.info("DoVi: RPU 实际 %d 帧 (视频 %d 帧)", rpu_frames, total_source_frames)
-
-    # 3. 复制 RPU (源 N 帧 → 2N 帧, inject 时自动裁剪到输出帧数)
     expanded_rpu = os.path.join(work_dir, "_dovi_expanded.bin")
     edit_json = os.path.join(work_dir, "_dovi_edit.json")
-    with open(edit_json, "w", encoding="utf-8") as f:
-        json.dump({
-            "duplicate": [{
-                "source": 0,
-                "offset": rpu_frames,
-                "length": rpu_frames
-            }]
-        }, f)
-
-    r = subprocess.run(
-        [dovi, "editor", "-i", src_rpu, "-j", edit_json, "-o", expanded_rpu],
-        capture_output=True, timeout=60, **popen_kw)
+    for attempt in range(15):
+        n = total_source_frames - attempt
+        if n <= 0:
+            break
+        with open(edit_json, "w", encoding="utf-8") as f:
+            json.dump({"duplicate": [{"source": 0, "offset": n, "length": n}]}, f)
+        r = subprocess.run(
+            [dovi, "editor", "-i", src_rpu, "-j", edit_json, "-o", expanded_rpu],
+            capture_output=True, timeout=60, **popen_kw)
+        if r.returncode == 0:
+            rpu_frames = n
+            break
     os.unlink(src_rpu)
     os.unlink(edit_json)
     if r.returncode != 0:
-        logger.warning("DoVi: RPU 扩展失败: %s",
-                       r.stderr.decode(errors="replace")[-200:])
+        logger.warning("DoVi: RPU 扩展失败 (%d 次尝试)", attempt + 1)
+        try: os.unlink(expanded_rpu)
+        except Exception: pass
         return None
 
-    logger.info("DoVi: RPU 处理完成 (%d→%d 条目)",
-                total_source_frames, total_output_frames)
+    logger.info("DoVi: RPU %d 帧 → %d 帧 (尝试 %d 次)",
+                rpu_frames, rpu_frames * 2, attempt + 1)
     return expanded_rpu
 
 
