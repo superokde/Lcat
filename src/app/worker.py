@@ -9,7 +9,6 @@ from pathlib import Path
 from PyQt5.QtCore import QObject, pyqtSignal
 from video_io.reader import VideoReader
 from video_io.writer import VideoWriter
-from utils.config import find_ffmpeg
 
 logger = logging.getLogger(__name__)
 
@@ -33,34 +32,30 @@ def _process_dovi_rpu(inp: str, total_source_frames: int,
         logger.warning("dovi_tool 未找到，跳过 DoVi RPU 处理")
         return None
 
-    ff = find_ffmpeg()
     popen_kw = {}
     if sys.platform == "win32":
         popen_kw["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-    # 1. 提取源 HEVC 流 (stream copy, ~3-5s)
-    src_hevc = os.path.join(work_dir, "_dovi_src.hevc")
-    logger.info("DoVi: 提取源 HEVC 流...")
-    r = subprocess.run(
-        [ff, "-y", "-i", inp, "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb",
-         "-f", "hevc", src_hevc],
-        capture_output=True, timeout=300, **popen_kw)
-    if r.returncode != 0:
-        logger.warning("DoVi: HEVC 提取失败")
-        return None
-
-    # 2. 提取 RPU
+    # 1. 直接用 dovi_tool 从 MKV 提取 RPU (社区方案, 不走 ffmpeg pipe 避免丢帧)
     src_rpu = os.path.join(work_dir, "_dovi_src_rpu.bin")
-    r = subprocess.run([dovi, "extract-rpu", src_hevc, "-o", src_rpu],
-                       capture_output=True, timeout=60, **popen_kw)
-    os.unlink(src_hevc)
+    logger.info("DoVi: 直接从 MKV 提取 RPU...")
+    r = subprocess.run([dovi, "extract-rpu", inp, "-o", src_rpu],
+                       capture_output=True, timeout=300, **popen_kw)
     if r.returncode != 0:
-        logger.warning("DoVi: RPU 提取失败")
+        logger.warning("DoVi: RPU 提取失败: %s",
+                       r.stderr.decode(errors="replace")[-200:])
         return None
 
-    # 3. RPU 帧数 = 视频帧数 - 安全边距 (ffmpeg stream copy 会裁剪尾部)
-    rpu_frames = max(1, total_source_frames - 10)
-    logger.info("DoVi: RPU 估算 %d 帧 (视频 %d 帧)", rpu_frames, total_source_frames)
+    # 2. 获取 RPU 实际帧数
+    rpu_frames = 0
+    import re as _re
+    m = _re.search(r"metadata len (\d+)",
+                   r.stderr.decode(errors="replace"))
+    if m:
+        rpu_frames = int(m.group(1))
+    if rpu_frames <= 0:
+        rpu_frames = total_source_frames
+    logger.info("DoVi: RPU 实际 %d 帧 (视频 %d 帧)", rpu_frames, total_source_frames)
 
     # 4. 生成匹配输出帧数的 RPU (duplicate 源 RPU 序列)
     expanded_rpu = os.path.join(work_dir, "_dovi_expanded.bin")
