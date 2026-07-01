@@ -58,15 +58,15 @@ def _process_dovi_rpu(inp: str, total_source_frames: int,
         logger.warning("DoVi: RPU 提取失败")
         return None
 
-    # 3. 获取实际 RPU 帧数 (可能与视频帧数不同)
-    r = subprocess.run([dovi, "info", "-i", src_rpu],
+    # 3. 获取实际 RPU 帧数 (可能 ≠ 视频帧数)
+    r = subprocess.run([dovi, "info", "-i", src_rpu, "-f", "0"],
                        capture_output=True, timeout=15, **popen_kw)
-    import re as _re
     rpu_frames = 0
-    m = _re.search(r"metadata len (\d+)",
-                   r.stderr.decode(errors="replace"))
-    if m:
-        rpu_frames = int(m.group(1))
+    try:
+        info_json = json.loads(r.stdout.decode(errors="replace"))
+        rpu_frames = len(info_json.get("frames", []))
+    except Exception:
+        pass
     if rpu_frames <= 0:
         rpu_frames = total_source_frames
     logger.info("DoVi: RPU 实际 %d 帧 (视频 %d 帧)", rpu_frames, total_source_frames)

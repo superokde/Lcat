@@ -158,6 +158,13 @@ class VideoWriter:
             logger.info("源视频为 8bit (%s)，10bit 编码降级为 8bit", src_pix_fmt)
             self.pix_fmt = "yuv420p"
 
+        # HDR 源自动切换 libx265: hevc_nvenc 不支持 HDR 元数据 (ffmpeg trac#8777)
+        if color_transfer == "smpte2084" and "nvenc" in encoder:
+            logger.info("HDR 源: hevc_nvenc → libx265 (NVENC 不支持 HDR 元数据)")
+            self.encoder = "libx265"
+            if "10" in self.pix_fmt or pix_fmt == "p010le":
+                self.pix_fmt = "yuv420p10le"
+
         self._fps_exact = _fps_to_rational(fps, tv_compat=False)
         # 计算匹配帧率的 timebase (Doom9 社区方案: video_track_timescale)
         self._timescale = int(self._fps_exact.split("/")[0])
