@@ -58,15 +58,15 @@ def _process_dovi_rpu(inp: str, total_source_frames: int,
         logger.warning("DoVi: RPU 提取失败")
         return None
 
-    # 3. 获取实际 RPU 帧数: editor remove 最后一帧触发 stderr 输出 metadata len
+    # 3. 获取实际 RPU 帧数: editor remove 帧 0 → stderr 输出 "Initial metadata len N"
     rpu_frames = 0
     import re as _re
-    dummy_json = os.path.join(work_dir, "_dovi_cnt.json")
-    dummy_out = os.path.join(work_dir, "_dovi_cnt.bin")
-    with open(dummy_json, "w", encoding="utf-8") as f:
-        json.dump({"remove": ["999999-999999"]}, f)  # 删除不存在的帧, 不影响 RPU
+    cnt_json = os.path.join(work_dir, "_dovi_cnt.json")
+    cnt_out = os.path.join(work_dir, "_dovi_cnt.bin")
+    with open(cnt_json, "w", encoding="utf-8") as f:
+        json.dump({"remove": ["0-0"]}, f)  # 删除帧 0, editor 会输出 metadata len
     r = subprocess.run(
-        [dovi, "editor", "-i", src_rpu, "-j", dummy_json, "-o", dummy_out],
+        [dovi, "editor", "-i", src_rpu, "-j", cnt_json, "-o", cnt_out],
         capture_output=True, timeout=15, **popen_kw)
     m = _re.search(r"Initial metadata len (\d+)",
                    r.stderr.decode(errors="replace"))
@@ -74,7 +74,7 @@ def _process_dovi_rpu(inp: str, total_source_frames: int,
         rpu_frames = int(m.group(1))
     if rpu_frames <= 0:
         rpu_frames = total_source_frames
-    for f in (dummy_json, dummy_out):
+    for f in (cnt_json, cnt_out):
         try:
             os.unlink(f)
         except Exception:
