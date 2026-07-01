@@ -93,8 +93,8 @@ def _encode_params(encoder: str, crf: int, pix_fmt: str) -> list:
             params += ["-preset", "slow", "-bf", "3",
                        "-b_strategy", "2", "-refs", "6"]
         elif encoder == "libx265":
-            params += ["-preset", "slow", "-bf", "3",
-                       "-x265-params", "aq-mode=3"]
+            params += ["-preset", "slow", "-bf", "3"]
+            params += ["-x265-params", "aq-mode=3"]
     # 始终指定输出像素格式: 防止 libx265 接收 BGR 输入后自动选 gbrp/Rext
     # → HEVC Rext 格式所有消费设备无法解码 (小米电视/当贝/VLC 均不支持)
     if pix_fmt in ("yuv420p10le", "p010le"):
@@ -218,29 +218,35 @@ class VideoWriter:
         cmd += ["-map_metadata", "-1", "-map", "0:v"]
         cmd += ["-c:v", self.encoder]
 
-        # HDR/DoVi: 双保险 — ffmpeg 容器元数据 + x265-params 流级 VUI
+        # HDR/DoVi: x265 流级 VUI (必须在 _encode_params 之后追加, 避免被覆盖)
+        _hdr_opts = []
         if self._color_transfer == "smpte2084":
             logger.info("HDR 编码启用: encoder=%s transfer=%s",
                         self.encoder, self._color_transfer)
-        if "x265" in self.encoder:  # libx265, hevc_nvenc 兼容
-            x265_opts = []
-            if self._color_transfer == "smpte2084":
-                x265_opts += [
+            if "x265" in self.encoder:
+                _hdr_opts = [
                     f"colorprim={self._color_primaries}",
                     f"transfer={self._color_transfer}",
                     f"colormatrix={self._color_space}",
                     "hdr-opt=1", "chromaloc=2",
                 ]
-            if self._dovi_rpu:
-                x265_opts += [
-                    f"dolby-vision-rpu={self._dovi_rpu}",
-                    "dolby-vision-profile=8.1",
-                ]
-                logger.info("DoVi: 使用 x265 dolby-vision-rpu")
-            if x265_opts:
-                cmd += ["-x265-params", ":".join(x265_opts)]
+        if "x265" in self.encoder and self._dovi_rpu:
+            _hdr_opts += [
+                f"dolby-vision-rpu={self._dovi_rpu}",
+                "dolby-vision-profile=8.1",
+            ]
+            logger.info("DoVi: 使用 x265 dolby-vision-rpu")
 
         cmd += _encode_params(self.encoder, self.crf, self.pix_fmt)
+
+        # 合并 HDR/DoVi 参数到已有的 -x265-params
+        if _hdr_opts:
+            for i in range(len(cmd) - 1, -1, -1):
+                if cmd[i] == "-x265-params" and i + 1 < len(cmd):
+                    cmd[i + 1] = ":".join(_hdr_opts) + ":" + cmd[i + 1]
+                    break
+            else:
+                cmd += ["-x265-params", ":".join(_hdr_opts)]
         # 恒定帧率 + 精确时间戳 (Doom9 社区方案)
         cmd += ["-vsync", "cfr"]
         cmd += ["-video_track_timescale", str(self._timescale)]
