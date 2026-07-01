@@ -67,7 +67,8 @@ def _inject_dovi_rpu(output_path: str, src_rpu: str, audio_src: str):
     r = subprocess.run([
         ff, "-y", "-i", tmp_dovi, "-i", audio_src,
         "-map_metadata", "-1", "-map", "0:v", "-c:v", "copy",
-        "-map", "1:a?", "-c:a", "copy", "-sn",
+        "-map", "1:a?", "-c:a", "copy",
+        "-map", "1:s?", "-c:s", "copy",
         tmp_mkv],
         capture_output=True, timeout=300, **pk)
     os.unlink(tmp_dovi)
