@@ -46,29 +46,36 @@ def _process_dovi_rpu(inp: str, total_source_frames: int,
                        r.stderr.decode(errors="replace")[-200:])
         return None
 
-    # 2. 获取 RPU 实际帧数
+    # 2. 获取 RPU 实际帧数 (用 probe duplicate 触发 stderr 输出)
     rpu_frames = 0
     import re as _re
-    m = _re.search(r"metadata len (\d+)",
+    probe_json = os.path.join(work_dir, "_dovi_probe.json")
+    probe_out = os.path.join(work_dir, "_dovi_probe.bin")
+    with open(probe_json, "w", encoding="utf-8") as f:
+        json.dump({"duplicate": [{"source": 0, "offset": 10, "length": 1}]}, f)
+    r = subprocess.run(
+        [dovi, "editor", "-i", src_rpu, "-j", probe_json, "-o", probe_out],
+        capture_output=True, timeout=15, **popen_kw)
+    m = _re.search(r"Initial metadata len (\d+)",
                    r.stderr.decode(errors="replace"))
     if m:
         rpu_frames = int(m.group(1))
+    for f in (probe_json, probe_out):
+        try: os.unlink(f)
+        except Exception: pass
     if rpu_frames <= 0:
         rpu_frames = total_source_frames
-    expand_n = rpu_frames - 1  # offset 必须 < rpu_frames (dovi_tool 边界限制)
-    logger.info("DoVi: RPU %d 帧 → 扩展 %d+%d 帧", rpu_frames, expand_n, expand_n)
+    logger.info("DoVi: RPU 实际 %d 帧 (视频 %d 帧)", rpu_frames, total_source_frames)
 
-    # 4. 生成匹配输出帧数的 RPU (源帧数 N → 2N-1 目标 → 用 N-1 复制 + inject 自动补齐)
-    # offset 必须 < rpu_frames 以避免 dovi_tool 边界限制
-    expand_n = rpu_frames - 1
+    # 3. 复制 RPU (源 N 帧 → 2N 帧, inject 时自动裁剪到输出帧数)
     expanded_rpu = os.path.join(work_dir, "_dovi_expanded.bin")
     edit_json = os.path.join(work_dir, "_dovi_edit.json")
     with open(edit_json, "w", encoding="utf-8") as f:
         json.dump({
             "duplicate": [{
                 "source": 0,
-                "offset": expand_n,
-                "length": expand_n
+                "offset": rpu_frames,
+                "length": rpu_frames
             }]
         }, f)
 
