@@ -131,8 +131,12 @@ class InterpolationWorker(QObject):
             out_path = Path(out)
             audio_src = inp  # 始终用原始文件提取音轨
 
+            # 保存源属性 (VFR→CFR 后会丢失)
+            _has_dovi = reader.has_dovi
+            _vfr = reader.vfr_needs_cfr
+
             # VFR → CFR 预处理 (方案4: 社区公认最可靠方法)
-            if reader.vfr_needs_cfr:
+            if _vfr:
                 from video_io.reader import convert_vfr_to_cfr
                 cfr_path = convert_vfr_to_cfr(inp, reader.fps,
                                               str(out_path.parent))
@@ -144,7 +148,7 @@ class InterpolationWorker(QObject):
 
             # DoVi RPU 预处理
             dovi_rpu = None
-            if reader.has_dovi:
+            if _has_dovi:
                 total_out_est = reader.total_frames * self.fps_multiplier
                 dovi_rpu = _process_dovi_rpu(
                     inp, reader.total_frames, total_out_est,

@@ -210,12 +210,28 @@ class VideoWriter:
         # 视频编码
         cmd += ["-map_metadata", "-1", "-map", "0:v"]
         cmd += ["-c:v", self.encoder]
-        if self.encoder == "libx265" and self._dovi_rpu:
-            # Dolby Vision Profile 8.1 via x265
-            dovi_params = (f"dolby-vision-rpu={self._dovi_rpu}:"
-                           "dolby-vision-profile=8.1")
-            cmd += ["-x265-params", dovi_params]
-            logger.info("DoVi: 使用 x265 dolby-vision-rpu")
+
+        # HDR/DoVi: x265-params 写入流级元数据 (rawvideo pipe 必须)
+        if self.encoder == "libx265":
+            x265_opts = []
+            if self._color_transfer == "smpte2084":
+                x265_opts += [
+                    f"colorprim={self._color_primaries}",
+                    f"transfer={self._color_transfer}",
+                    f"colormatrix={self._color_space}",
+                    "hdr-opt=1", "chromaloc=2",
+                ]
+            if self._dovi_rpu:
+                x265_opts += [
+                    f"dolby-vision-rpu={self._dovi_rpu}",
+                    "dolby-vision-profile=8.1",
+                ]
+                logger.info("DoVi: 使用 x265 dolby-vision-rpu")
+            if x265_opts:
+                cmd += ["-x265-params", ":".join(x265_opts)]
+                if self._color_transfer == "smpte2084":
+                    logger.info("HDR: x265-params %s", ":".join(x265_opts[:4]))
+
         cmd += _encode_params(self.encoder, self.crf, self.pix_fmt)
         # 恒定帧率 + 精确时间戳 (Doom9 社区方案)
         cmd += ["-vsync", "cfr"]
