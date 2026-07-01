@@ -145,12 +145,16 @@ def _probe(video_path: str) -> dict:
     if m:
         offset = float(m.group(1))
 
+    # DoVi 检测：检查 side_data 是否包含 DOVI configuration record
+    has_dovi = "DOVI configuration record" in info
+
     return {"width": width, "height": height, "fps": fps,
             "total_frames": total_frames, "duration": duration_s,
             "start_time": offset, "pix_fmt": pix_fmt, "sar": sar,
             "vfr_warn": vfr_needs_cfr,
             "color_space": color_space, "color_transfer": color_transfer,
-            "color_primaries": color_primaries}
+            "color_primaries": color_primaries,
+            "has_dovi": has_dovi}
 
 
 def convert_vfr_to_cfr(src_path: str, fps_target: float, work_dir: str) -> str:
@@ -193,6 +197,7 @@ class VideoReader:
         self.color_space = meta.get("color_space", "bt709")
         self.color_transfer = meta.get("color_transfer", "bt709")
         self.color_primaries = meta.get("color_primaries", "bt709")
+        self.has_dovi = meta.get("has_dovi", False)
         logger.info("探测: %dx%d %.3ffps %d帧 (偏移 %.3fs)",
                      self.width, self.height, self.fps,
                      self.total_frames, self.start_time)

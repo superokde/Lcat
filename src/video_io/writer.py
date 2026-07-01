@@ -137,7 +137,8 @@ class VideoWriter:
                  src_sar: str = None,
                  color_space: str = "bt709",
                  color_transfer: str = "bt709",
-                 color_primaries: str = "bt709"):
+                 color_primaries: str = "bt709",
+                 dovi_rpu: str = None):
         self.output_path = Path(output_path)
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         self.fps = fps
@@ -164,6 +165,7 @@ class VideoWriter:
         self._color_space = color_space
         self._color_transfer = color_transfer
         self._color_primaries = color_primaries
+        self._dovi_rpu = dovi_rpu
         if color_transfer == "smpte2084" or color_primaries == "bt2020":
             logger.info("HDR 色彩: %s/%s/%s",
                         color_space, color_transfer, color_primaries)
@@ -208,6 +210,12 @@ class VideoWriter:
         # 视频编码
         cmd += ["-map_metadata", "-1", "-map", "0:v"]
         cmd += ["-c:v", self.encoder]
+        if self.encoder == "libx265" and self._dovi_rpu:
+            # Dolby Vision Profile 8.1 via x265
+            dovi_params = (f"dolby-vision-rpu={self._dovi_rpu}:"
+                           "dolby-vision-profile=8.1")
+            cmd += ["-x265-params", dovi_params]
+            logger.info("DoVi: 使用 x265 dolby-vision-rpu")
         cmd += _encode_params(self.encoder, self.crf, self.pix_fmt)
         # 恒定帧率 + 精确时间戳 (Doom9 社区方案)
         cmd += ["-vsync", "cfr"]
